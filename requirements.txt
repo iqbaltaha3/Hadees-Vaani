@@ -1,4 +1,5 @@
 streamlit
-requests
-gTTS
+pandas
+sentence-transformers
+scikit-learn
 
