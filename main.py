@@ -5,14 +5,30 @@ from googletrans import Translator
 import spacy
 import requests
 from gtts import gTTS
+from pydub import AudioSegment
 import os
 
 # ---------- Helper Functions ----------
 
 def transcribe_audio(uploaded_file, language="hi-IN"):
-    """Transcribe uploaded audio using Google's Speech Recognition."""
+    """
+    Transcribe uploaded audio using Google's Speech Recognition.
+    Supports wav, mp3, and opus files.
+    """
+    # Check file extension
+    file_name = uploaded_file.name.lower()
+    if file_name.endswith(".opus"):
+        # Convert opus file to wav using pydub
+        audio = AudioSegment.from_file(uploaded_file, format="opus")
+        wav_io = BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_io.seek(0)
+        audio_file = sr.AudioFile(wav_io)
+    else:
+        # For wav and mp3, use the file directly
+        audio_file = sr.AudioFile(BytesIO(uploaded_file.read()))
+    
     recognizer = sr.Recognizer()
-    audio_file = sr.AudioFile(BytesIO(uploaded_file.read()))
     with audio_file as source:
         audio_data = recognizer.record(source)
     try:
@@ -41,21 +57,20 @@ def extract_keywords(text):
     return keywords
 
 def fetch_hadith(keyword):
-    """Fetch hadith from Sutanlab Hadith API using a given keyword.
-       The Sutanlab API is public and does not require an API key.
-       Endpoint documentation: https://api.hadith.sutanlab.id/ """
+    """
+    Fetch hadith from Sutanlab Hadith API using a given keyword.
+    The Sutanlab API is public and does not require an API key.
+    Endpoint documentation: https://api.hadith.sutanlab.id/
+    """
     base_url = "https://api.hadith.sutanlab.id/hadiths/search"
     params = {"query": keyword}  # Adjust parameters as needed.
     response = requests.get(base_url, params=params)
     if response.status_code == 200:
         data = response.json()
-        # Assuming the JSON has a 'data' key with a list of hadith items,
-        # and each item has a 'data' dict containing the hadith text.
         hadith_texts = []
         for item in data.get("data", []):
-            # Try to get the hadith text from the response. The exact key might vary.
-            text = item.get("data", {}).get("arab", "")  # Arabic text is often provided.
-            # If there's also an English version, you might check for that.
+            # Try to extract the hadith text (Arabic first, then English if available)
+            text = item.get("data", {}).get("arab", "")
             if not text:
                 text = item.get("data", {}).get("en", "")
             hadith_texts.append(text)
@@ -85,8 +100,8 @@ extracts keywords, searches for relevant hadith from the Sutanlab Hadith API, tr
 and finally speaks the results.
 """)
 
-# Upload voice note
-uploaded_file = st.file_uploader("Upload your Hindi/Urdu voice note (wav or mp3)", type=["wav", "mp3"])
+# Upload voice note (supporting wav, mp3, and opus files)
+uploaded_file = st.file_uploader("Upload your Hindi/Urdu voice note (wav, mp3, or opus)", type=["wav", "mp3", "opus"])
 
 if uploaded_file:
     st.audio(uploaded_file, format="audio/wav")
@@ -125,3 +140,4 @@ if uploaded_file:
                         st.audio(audio_path)
             else:
                 st.warning("No keywords were extracted from the input.")
+
