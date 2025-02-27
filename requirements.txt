@@ -5,3 +5,4 @@ spacy
 requests
 gTTS
 pydub
+ffmpeg
