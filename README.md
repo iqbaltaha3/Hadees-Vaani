@@ -1,1 +1,1 @@
-# Hadees-Vaani
+# Quran-Vaani
