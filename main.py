@@ -1,65 +1,69 @@
 import streamlit as st
-import requests
-from gtts import gTTS
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
-def fetch_hadith(keyword):
-    """
-    Fetch hadith from the Sutanlab Hadith API using a given keyword.
-    The API is public and does not require an API key.
-    """
-    base_url = "https://api.hadith.sutanlab.id/hadiths/search"
-    params = {"query": keyword}
-    response = requests.get(base_url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        hadith_texts = []
-        for item in data.get("data", []):
-            # Try to get Arabic text; if unavailable, fall back to English.
-            text = item.get("data", {}).get("arab", "")
-            if not text:
-                text = item.get("data", {}).get("en", "")
-            hadith_texts.append(text)
-        return hadith_texts
-    else:
-        st.error("Error fetching hadith from Sutanlab API: " + str(response.status_code))
-        return []
+st.title("Quran & Hadith Semantic Search")
+st.write("Enter a natural language query to search across Quran ayat and Hadith.")
 
-def convert_text_to_speech(text, lang="en"):
-    """
-    Convert the given text to speech using gTTS.
-    The audio is saved as an MP3 file.
-    """
-    try:
-        tts = gTTS(text=text, lang=lang)
-        audio_file_path = "hadith_output.mp3"
-        tts.save(audio_file_path)
-        return audio_file_path
-    except Exception as e:
-        st.error("Error converting text to speech: " + str(e))
-        return None
+# --- Data Loading ---
+@st.cache_data
+def load_data():
+    quran_df = pd.read_csv("quran.csv")
+    hadith_df = pd.read_csv("hadith.csv")
+    return quran_df, hadith_df
 
-# ---------- Streamlit App ----------
+quran_df, hadith_df = load_data()
 
-st.title("Hadees Vaani - Simplified")
-st.write("Enter a keyword to search for relevant hadith:")
+# --- Model Loading ---
+@st.cache_resource
+def load_model():
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    return model
 
-keyword = st.text_input("Keyword")
+model = load_model()
 
-if keyword:
-    hadiths = fetch_hadith(keyword)
-    if hadiths:
-        st.write("### Fetched Hadiths:")
-        for idx, hadith in enumerate(hadiths, 1):
-            st.write(f"**{idx}.** {hadith}")
+# --- Compute Embeddings ---
+@st.cache_data(show_spinner=True)
+def compute_embeddings(texts):
+    return model.encode(texts, show_progress_bar=True)
 
-        if st.button("Listen to Hadiths"):
-            # Combine all hadith texts into one string.
-            final_text = " ".join(hadiths)
-            # Change 'en' to 'hi' if you want the speech in Hindi, 
-            # but note that translation is not performed in this simplified version.
-            audio_path = convert_text_to_speech(final_text, lang="en")
-            if audio_path:
-                st.audio(audio_path)
-    else:
-        st.write("No hadith found for this keyword.")
+quran_texts = quran_df["ayahs-translation"].tolist()
+hadith_texts = hadith_df["text_en"].tolist()
 
+quran_embeddings = compute_embeddings(quran_texts)
+hadith_embeddings = compute_embeddings(hadith_texts)
+
+# --- User Query ---
+query = st.text_input("Enter your search query:")
+
+if query:
+    # Convert query to embedding
+    query_embedding = model.encode([query])
+    
+    # Compute cosine similarities
+    quran_similarities = cosine_similarity(query_embedding, quran_embeddings)[0]
+    hadith_similarities = cosine_similarity(query_embedding, hadith_embeddings)[0]
+    
+    # Add similarity scores to dataframes
+    quran_df["similarity"] = quran_similarities
+    hadith_df["similarity"] = hadith_similarities
+    
+    # Get top 5 results from each dataset
+    top_n = 5
+    top_quran = quran_df.sort_values("similarity", ascending=False).head(top_n)
+    top_hadith = hadith_df.sort_values("similarity", ascending=False).head(top_n)
+    
+    st.markdown("### Top Matching Quran Ayat")
+    for _, row in top_quran.iterrows():
+        st.write(f"**Surah {row['surahs']} - Ayat {row['ayahs']}**")
+        st.write(row["ayahs-translation"])
+        st.write(f"Similarity Score: {row['similarity']:.2f}")
+        st.markdown("---")
+    
+    st.markdown("### Top Matching Hadith")
+    for _, row in top_hadith.iterrows():
+        st.write(f"**Source:** {row['source']}, **Hadith No:** {row['hadith_no']}")
+        st.write(row["text_en"])
+        st.write(f"Similarity Score: {row['similarity']:.2f}")
+        st.markdown("---")
